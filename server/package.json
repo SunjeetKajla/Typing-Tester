@@ -5,9 +5,6 @@
   "description": "",
   "main": "server.js",
   "scripts": {
-    "test": "node --test",
-    "db:check": "node scripts/check-db.js",
-    "db:setup": "node scripts/check-db.js --setup",
     "dev": "nodemon server.js",
     "start": "node server.js"
   },
