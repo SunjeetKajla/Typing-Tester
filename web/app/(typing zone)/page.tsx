@@ -108,7 +108,7 @@ export default function MainPage() {
 
   return (
     <main className="mx-auto w-full max-w-3xl space-y-6 px-6 py-16">
-      <h1 className="text-3xl font-bold">Typing Performance Tracker</h1>
+      <h1 className="text-3xl font-bold">Typing Performance Tester</h1>
       {/* <Link href="/leaderboard" className="rounded-lg bg-blue-600 px-4 py-3 mx-2 text-white disabled:opacity-50">
         View leaderboard →
       </Link> */}

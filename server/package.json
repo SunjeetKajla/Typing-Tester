@@ -6,14 +6,20 @@
   "main": "server.js",
   "scripts": {
     "test": "node --test",
+    "db:check": "node scripts/check-db.js",
+    "db:setup": "node scripts/check-db.js --setup",
     "dev": "nodemon server.js",
     "start": "node server.js"
   },
   "keywords": [],
   "type": "commonjs",
   "dependencies": {
+    "connect-mongo": "^6.0.0",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "express-session": "^1.19.0",
+    "google-auth-library": "^11.0.2",
+    "mongodb": "^7.6.0",
     "socket.io": "^4.8.3"
   },
   "devDependencies": {

@@ -1,0 +1,13 @@
+node_modules
+.pnpm-store
+.git
+.env*
+coverage
+*.log
+**/*oauth*creds*.json
+**/client_secret*.json
+*.pem
+test
+*.md
+Dockerfile
+.dockerignore

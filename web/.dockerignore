@@ -1,0 +1,17 @@
+node_modules
+.next
+out
+build
+coverage
+.git
+.env*
+.pnpm-store
+*.log
+*.tsbuildinfo
+**/*oauth*creds*.json
+**/client_secret*.json
+*.pem
+test
+README.md
+Dockerfile
+.dockerignore
