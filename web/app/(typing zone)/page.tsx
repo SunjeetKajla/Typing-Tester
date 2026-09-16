@@ -1,12 +1,14 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import Link from "next/link";
+import SpeedGraph from "./speed-graph";
+import { measureTyping, type TypingSample } from "./typing-stats";
 
 const initialPassage = "Learning to type takes practice. Focus on accuracy first. Speed follows my brother.\nSpeed or Accuracy? Accuracy!";
 
 export default function MainPage() {
   const typingInputRef = useRef<HTMLTextAreaElement>(null);
+  const latestTextRef = useRef("");
   const [typedText, setTypedText] = useState("");
   const [caretPosition, setCaretPosition] = useState(0);
   const [passage, setPassage] = useState(initialPassage);
@@ -15,12 +17,10 @@ export default function MainPage() {
   const [isFinished, setIsFinished] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
+  const [samples, setSamples] = useState<TypingSample[]>([]);
 
-  const correctCharacters = typedText.split("").filter((character, index) => character === passage[index]).length;
-  const accuracy = typedText.length === 0 ? null : (correctCharacters / typedText.length) * 100;
-  const elapsedMinutes = elapsedSeconds / 60;
-  // Five typed characters (including spaces and punctuation) count as one word.
-  const grossWpm = elapsedMinutes > 0 ? typedText.length / 5 / elapsedMinutes : 0;
+  const { grossWpm, errorRate } = measureTyping(typedText, passage, elapsedSeconds);
+  const accuracy = typedText.length === 0 ? null : 100 - errorRate;
   const adjustedWpm = grossWpm * ((accuracy ?? 0) / 100);
 
   useEffect(() => {
@@ -39,12 +39,15 @@ export default function MainPage() {
       setStartedAt(start);
     }
 
+    const seconds = (now - start) / 1000;
+    latestTextRef.current = value;
     setTypedText(value);
     setCaretPosition(value.length);
-    setElapsedSeconds((now - start) / 1000);
+    setElapsedSeconds(seconds);
 
     if (value.length === passage.length) {
       setIsFinished(true);
+      setSamples((previous) => [...previous, measureTyping(value, passage, seconds)]);
     }
   }
 
@@ -52,11 +55,17 @@ export default function MainPage() {
     if (startedAt === null || isFinished) return;
 
     const intervalId = window.setInterval(() => {
-      setElapsedSeconds((performance.now() - startedAt) / 1000);
+      const seconds = (performance.now() - startedAt) / 1000;
+      setElapsedSeconds(seconds);
+      const sample = measureTyping(latestTextRef.current, passage, seconds);
+      setSamples((previous) => {
+        const lastSeconds = previous[previous.length - 1]?.seconds ?? 0;
+        return seconds - lastSeconds >= 1 ? [...previous, sample] : previous;
+      });
     }, 100);
 
     return () => window.clearInterval(intervalId);
-  }, [startedAt, isFinished]);
+  }, [startedAt, isFinished, passage]);
 
   async function loadRandomPassage() {
     if (isLoading) return;
@@ -64,6 +73,8 @@ export default function MainPage() {
     setIsLoading(true);
     setError("");
     setTypedText("");
+    latestTextRef.current = "";
+    setSamples([]);
     setCaretPosition(0);
     setStartedAt(null);
     setElapsedSeconds(0);
@@ -96,7 +107,7 @@ export default function MainPage() {
   }
 
   return (
-    <main className="mx-auto max-w-3xl space-y-6 px-6 py-16">
+    <main className="mx-auto w-full max-w-3xl space-y-6 px-6 py-16">
       <h1 className="text-3xl font-bold">Typing Performance Tracker</h1>
       {/* <Link href="/leaderboard" className="rounded-lg bg-blue-600 px-4 py-3 mx-2 text-white disabled:opacity-50">
         View leaderboard →
@@ -183,14 +194,19 @@ export default function MainPage() {
       <p>Characters typed: {typedText.length} / {passage.length}</p>
       <p>Time: {elapsedSeconds.toFixed(1)} seconds</p>
       <p>Accuracy: {accuracy === null ? "—" : `${accuracy.toFixed(1)}%`}</p>
-      <p>Gross WPM: {grossWpm.toFixed(1)}</p>
-      <p className="font-semibold">Adjusted WPM: {adjustedWpm.toFixed(1)}</p>
+      <p>Gross WPM: {grossWpm === null ? "—" : `${grossWpm.toFixed(1)} words per minutes`}</p>
 
       {isFinished && (
         <p role="status" className="text-green-500">
           Test completed! Load another passage to try again.
         </p>
       )}
+      <SpeedGraph
+        samples={samples}
+        grossWpm={grossWpm}
+        errorRate={typedText.length === 0 ? null : errorRate}
+        adjustedWpm={adjustedWpm}
+      />
     </main>
   );
 }
