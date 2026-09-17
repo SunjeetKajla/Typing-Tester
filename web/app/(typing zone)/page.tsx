@@ -1,14 +1,28 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
+import { useCallback, useEffect, useRef, useState } from "react";
+import HistorySection from "./history-section";
 import SpeedGraph from "./speed-graph";
 import { measureTyping, type TypingSample } from "./typing-stats";
+import { useCurrentUser } from "../use-current-user";
+import {
+  appendLocalResult,
+  postResult,
+  readPendingResults,
+  removePendingResult,
+  type PendingResult,
+} from "./local-results";
 
 const initialPassage = "Learning to type takes practice. Focus on accuracy first. Speed follows my brother.\nSpeed or Accuracy? Accuracy!";
+
+type SaveStatus = "idle" | "saving" | "saved" | "local" | "error";
 
 export default function MainPage() {
   const typingInputRef = useRef<HTMLTextAreaElement>(null);
   const latestTextRef = useRef("");
+  const finishPersistedRef = useRef(false);
+  const flushingRef = useRef(false);
   const [typedText, setTypedText] = useState("");
   const [caretPosition, setCaretPosition] = useState(0);
   const [passage, setPassage] = useState(initialPassage);
@@ -18,6 +32,16 @@ export default function MainPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
   const [samples, setSamples] = useState<TypingSample[]>([]);
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
+  const [saveError, setSaveError] = useState("");
+  const [pendingCount, setPendingCount] = useState(() => readPendingResults().length);
+  const [historyVersion, setHistoryVersion] = useState(0);
+  const { user, loading: authLoading } = useCurrentUser();
+  const userRef = useRef(user);
+
+  useEffect(() => {
+    userRef.current = user;
+  }, [user]);
 
   const { grossWpm, errorRate } = measureTyping(typedText, passage, elapsedSeconds);
   const accuracy = typedText.length === 0 ? null : 100 - errorRate;
@@ -28,6 +52,87 @@ export default function MainPage() {
       typingInputRef.current?.focus({ preventScroll: true });
     }
   }, [isLoading, isFinished]);
+
+  const persistResult = useCallback(async (result: PendingResult) => {
+    // Always keep a local copy so anonymous tests survive reloads.
+    appendLocalResult(result);
+    setPendingCount(readPendingResults().length);
+    setHistoryVersion((version) => version + 1);
+
+    if (!userRef.current) {
+      setSaveStatus("local");
+      return;
+    }
+
+    setSaveStatus("saving");
+    setSaveError("");
+    try {
+      await postResult(result);
+      removePendingResult(result);
+      setPendingCount(readPendingResults().length);
+      setSaveStatus("saved");
+    } catch (err) {
+      const status = (err as Error & { status?: number }).status;
+      if (status === 401) {
+        // Session expired: keep it queued locally for the next sign-in.
+        setSaveStatus("local");
+      } else {
+        setSaveError("Could not save your result. Please try again.");
+        setSaveStatus("error");
+      }
+      setPendingCount(readPendingResults().length);
+    }
+    setHistoryVersion((version) => version + 1);
+  }, []);
+
+  // When a signed-out user signs in, upload queued local results so their
+  // history syncs across devices. The leaderboard shows every upload.
+  useEffect(() => {
+    if (!user || flushingRef.current) return;
+    const pending = readPendingResults();
+    if (pending.length === 0) return;
+    flushingRef.current = true;
+    (async () => {
+      let failures = 0;
+      for (const result of pending) {
+        try {
+          await postResult(result);
+          removePendingResult(result);
+        } catch {
+          failures += 1;
+        }
+      }
+      setPendingCount(readPendingResults().length);
+      if (failures === 0) setSaveStatus((previous) => (previous === "local" ? "saved" : previous));
+      setHistoryVersion((version) => version + 1);
+      flushingRef.current = false;
+    })();
+  }, [user]);
+
+  const retrySave = useCallback(async () => {
+    const pending = readPendingResults();
+    const latest = pending[pending.length - 1];
+    if (!latest) {
+      setSaveStatus("idle");
+      return;
+    }
+    if (!userRef.current) {
+      setSaveStatus("local");
+      return;
+    }
+    setSaveStatus("saving");
+    setSaveError("");
+    try {
+      await postResult(latest);
+      removePendingResult(latest);
+      setPendingCount(readPendingResults().length);
+      setSaveStatus("saved");
+    } catch {
+      setSaveError("Could not save your result. Please try again.");
+      setSaveStatus("error");
+    }
+    setHistoryVersion((version) => version + 1);
+  }, []);
 
   function handleTyping(value: string) {
     if (isLoading || isFinished) return;
@@ -45,9 +150,20 @@ export default function MainPage() {
     setCaretPosition(value.length);
     setElapsedSeconds(seconds);
 
-    if (value.length === passage.length) {
+    if (value.length === passage.length && !finishPersistedRef.current) {
+      finishPersistedRef.current = true;
+      const finalSample = measureTyping(value, passage, seconds);
+      const finalAccuracy = 100 - finalSample.errorRate;
       setIsFinished(true);
-      setSamples((previous) => [...previous, measureTyping(value, passage, seconds)]);
+      setSamples((previous) => [...previous, finalSample]);
+      void persistResult({
+        grossWpm: finalSample.grossWpm,
+        accuracy: finalAccuracy,
+        elapsedSeconds: seconds,
+        charsTyped: value.length,
+        passageLength: passage.length,
+        createdAt: new Date().toISOString(),
+      });
     }
   }
 
@@ -72,6 +188,8 @@ export default function MainPage() {
 
     setIsLoading(true);
     setError("");
+    setSaveError("");
+    setSaveStatus("idle");
     setTypedText("");
     latestTextRef.current = "";
     setSamples([]);
@@ -79,6 +197,7 @@ export default function MainPage() {
     setStartedAt(null);
     setElapsedSeconds(0);
     setIsFinished(false);
+    finishPersistedRef.current = false;
 
     try {
       const response = await fetch("https://dummyjson.com/quotes/random", {
@@ -109,18 +228,20 @@ export default function MainPage() {
   return (
     <main className="mx-auto w-full max-w-3xl space-y-6 px-6 py-16">
       <h1 className="text-3xl font-bold">Typing Performance Tester</h1>
-      {/* <Link href="/leaderboard" className="rounded-lg bg-blue-600 px-4 py-3 mx-2 text-white disabled:opacity-50">
-        View leaderboard →
-      </Link> */}
+      <div className="flex flex-wrap gap-3">
+        <Link href="/leaderboard" className="rounded-lg bg-blue-600 px-4 py-2 text-white hover:bg-blue-700">
+          View leaderboard →
+        </Link>
 
-      <button
-        type="button"
-        onClick={loadRandomPassage}
-        disabled={isLoading}
-        className="rounded-lg bg-blue-600 px-4 py-2 text-white disabled:opacity-50"
-      >
-        {isLoading ? "Loading..." : "New random passage"}
-      </button>
+        <button
+          type="button"
+          onClick={loadRandomPassage}
+          disabled={isLoading}
+          className="rounded-lg bg-blue-600 px-4 py-2 text-white disabled:opacity-50"
+        >
+          {isLoading ? "Loading..." : "New random passage"}
+        </button>
+      </div>
 
       {error && (
         <p role="alert" className="text-red-500">
@@ -195,11 +316,39 @@ export default function MainPage() {
       <p>Time: {elapsedSeconds.toFixed(1)} seconds</p>
       <p>Accuracy: {accuracy === null ? "—" : `${accuracy.toFixed(1)}%`}</p>
       <p>Gross WPM: {grossWpm === null ? "—" : `${grossWpm.toFixed(1)} words per minutes`}</p>
+      <p className="font-bold">Adjusted WPM: {adjustedWpm === null ? "—" : `${adjustedWpm.toFixed(1)} words per minutes`}</p>
 
       {isFinished && (
-        <p role="status" className="text-green-500">
-          Test completed! Load another passage to try again.
-        </p>
+        <div className="space-y-2">
+          <p role="status" className="text-green-500">
+            Test completed! Load another passage to try again.
+          </p>
+          {saveStatus === "saving" && (
+            <p role="status" className="text-sm text-gray-500">Saving your result…</p>
+          )}
+          {saveStatus === "saved" && (
+            <p role="status" className="text-sm text-green-600">
+              Result saved{pendingCount > 0 ? ` (${pendingCount} older result${pendingCount === 1 ? "" : "s"} still queued)` : ""}. See it on the leaderboard.
+            </p>
+          )}
+          {saveStatus === "local" && (
+            <p role="status" className="text-sm text-gray-500">
+              Saved on this device. Sign in to sync it across devices{pendingCount > 1 ? ` (${pendingCount} queued)` : ""}.
+            </p>
+          )}
+          {saveStatus === "error" && (
+            <div className="flex flex-wrap items-center gap-3">
+              <p role="alert" className="text-sm text-red-500">{saveError}</p>
+              <button
+                type="button"
+                onClick={retrySave}
+                className="rounded-lg bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-700"
+              >
+                Retry save
+              </button>
+            </div>
+          )}
+        </div>
       )}
       <SpeedGraph
         samples={samples}
@@ -207,6 +356,7 @@ export default function MainPage() {
         errorRate={typedText.length === 0 ? null : errorRate}
         adjustedWpm={adjustedWpm}
       />
+      <HistorySection user={user} authLoading={authLoading} refreshKey={historyVersion} />
     </main>
   );
 }

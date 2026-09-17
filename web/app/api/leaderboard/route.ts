@@ -4,7 +4,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
-    const url = new URL("/api/leaderboard", process.env.SERVER_URL || "http://localhost:3001");
+    const url = new URL("/api/leaderboard", process.env.SERVER_URL || "http://localhost:8000");
     const response = await fetch(url, {
       cache: "no-store",
       signal: AbortSignal.timeout(8000),

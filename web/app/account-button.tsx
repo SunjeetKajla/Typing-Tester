@@ -1,47 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
-
-type User = { id: string; username: string; name: string };
-
-const loginErrors: Record<string, string> = {
-  configuration: "Google sign-in needs to be configured on the server.",
-  database: "Cannot connect to the user database. Please try again later.",
-  expired: "Your sign-in request expired. Please try again.",
-  cancelled: "Google sign-in was cancelled.",
-  google: "Google sign-in could not be completed. Please try again.",
-  unavailable: "Sign-in is temporarily unavailable. Please try again later.",
-};
+import { useCurrentUser } from "./use-current-user";
 
 export default function AccountButton() {
-  const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-
-  useEffect(() => {
-    const controller = new AbortController();
-    async function loadUser() {
-      const url = new URL(window.location.href);
-      const reason = url.searchParams.get("auth_error");
-      if (reason) {
-        setError(loginErrors[reason] || loginErrors.unavailable);
-        url.searchParams.delete("auth_error");
-        window.history.replaceState(null, "", url);
-      }
-      try {
-        const response = await fetch("/api/auth/me", { cache: "no-store", signal: controller.signal });
-        if (!response.ok) throw new Error("Unable to load account");
-        const data = await response.json();
-        setUser(data.user);
-      } catch {
-        if (!controller.signal.aborted) setError(loginErrors.unavailable);
-      } finally {
-        if (!controller.signal.aborted) setLoading(false);
-      }
-    }
-    loadUser();
-    return () => controller.abort();
-  }, []);
+  const { user, loading, error, setUser, setLoading, setError } = useCurrentUser();
 
   async function logout() {
     setLoading(true);
