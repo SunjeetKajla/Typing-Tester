@@ -1,6 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import {
+  createContext,
+  createElement,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type Dispatch,
+  type ReactNode,
+  type SetStateAction,
+} from "react";
 
 export type CurrentUser = { id: string; username: string; name: string };
 
@@ -13,14 +24,22 @@ export const loginErrors: Record<string, string> = {
   unavailable: "Sign-in is temporarily unavailable. Please try again later.",
 };
 
-export function useCurrentUser() {
+type CurrentUserContextValue = {
+  user: CurrentUser | null;
+  loading: boolean;
+  error: string;
+  setUser: Dispatch<SetStateAction<CurrentUser | null>>;
+  setLoading: Dispatch<SetStateAction<boolean>>;
+  setError: Dispatch<SetStateAction<string>>;
+  refresh: (signal?: AbortSignal) => Promise<void>;
+};
+
+const CurrentUserContext = createContext<CurrentUserContextValue | null>(null);
+
+export function CurrentUserProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<CurrentUser | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(() => {
-    if (typeof window === "undefined") return "";
-    const reason = new URL(window.location.href).searchParams.get("auth_error");
-    return reason ? loginErrors[reason] || loginErrors.unavailable : "";
-  });
+  const [error, setError] = useState("");
 
   const refresh = useCallback(async (signal?: AbortSignal) => {
     try {
@@ -30,10 +49,13 @@ export function useCurrentUser() {
       });
       if (!response.ok) throw new Error("Unable to load account");
       const data = await response.json();
-      if (!signal?.aborted) setUser(data.user ?? null);
+      if (!signal?.aborted) {
+        setUser(data.user ?? null);
+      }
     } catch {
       if (!signal?.aborted) {
         // Network/auth backend down: treat as signed-out but surface a message.
+        setUser(null);
         setError(loginErrors.unavailable);
       }
     } finally {
@@ -43,30 +65,35 @@ export function useCurrentUser() {
 
   useEffect(() => {
     const controller = new AbortController();
-    // Clean one-time OAuth error params from the URL (external system sync).
     const url = new URL(window.location.href);
-    if (url.searchParams.has("auth_error")) {
+    const reason = url.searchParams.get("auth_error");
+    if (reason) {
+      queueMicrotask(() => {
+        if (!controller.signal.aborted) {
+          setError(loginErrors[reason] || loginErrors.unavailable);
+        }
+      });
       url.searchParams.delete("auth_error");
       window.history.replaceState(null, "", url);
     }
     async function loadUser() {
-      try {
-        const response = await fetch("/api/auth/me", {
-          cache: "no-store",
-          signal: controller.signal,
-        });
-        if (!response.ok) throw new Error("Unable to load account");
-        const data = await response.json();
-        if (!controller.signal.aborted) setUser(data.user ?? null);
-      } catch {
-        if (!controller.signal.aborted) setError(loginErrors.unavailable);
-      } finally {
-        if (!controller.signal.aborted) setLoading(false);
-      }
+      await Promise.resolve();
+      if (!controller.signal.aborted) await refresh(controller.signal);
     }
     void loadUser();
     return () => controller.abort();
-  }, []);
+  }, [refresh]);
 
-  return { user, loading, error, setUser, setLoading, setError, refresh };
+  const value = useMemo(
+    () => ({ user, loading, error, setUser, setLoading, setError, refresh }),
+    [user, loading, error, refresh],
+  );
+
+  return createElement(CurrentUserContext.Provider, { value }, children);
+}
+
+export function useCurrentUser() {
+  const context = useContext(CurrentUserContext);
+  if (!context) throw new Error("useCurrentUser must be used inside CurrentUserProvider");
+  return context;
 }

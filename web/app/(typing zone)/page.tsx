@@ -6,13 +6,8 @@ import HistorySection from "./history-section";
 import SpeedGraph from "./speed-graph";
 import { measureTyping, type TypingSample } from "./typing-stats";
 import { useCurrentUser } from "../use-current-user";
-import {
-  appendLocalResult,
-  postResult,
-  readPendingResults,
-  removePendingResult,
-  type PendingResult,
-} from "./local-results";
+import { appendLocalResult, markResultSynced, postResult, readPendingResults,
+        type PendingResult, type TypingMode } from "./local-results";
 
 const initialPassage = "Learning to type takes practice. Focus on accuracy first. Speed follows my brother.\nSpeed or Accuracy? Accuracy!";
 
@@ -26,6 +21,7 @@ export default function MainPage() {
   const [typedText, setTypedText] = useState("");
   const [caretPosition, setCaretPosition] = useState(0);
   const [passage, setPassage] = useState(initialPassage);
+  const [mode, setMode] = useState<TypingMode>("practice");
   const [startedAt, setStartedAt] = useState<number | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [isFinished, setIsFinished] = useState(false);
@@ -34,13 +30,20 @@ export default function MainPage() {
   const [samples, setSamples] = useState<TypingSample[]>([]);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
   const [saveError, setSaveError] = useState("");
-  const [pendingCount, setPendingCount] = useState(() => readPendingResults().length);
+  const [pendingCount, setPendingCount] = useState(0);
   const [historyVersion, setHistoryVersion] = useState(0);
   const { user, loading: authLoading } = useCurrentUser();
   const userRef = useRef(user);
 
   useEffect(() => {
+    let cancelled = false;
     userRef.current = user;
+    async function syncPendingCount() {
+      await Promise.resolve();
+      if (!cancelled) setPendingCount(readPendingResults(user?.id ?? null).length);
+    }
+    void syncPendingCount();
+    return () => { cancelled = true; };
   }, [user]);
 
   const { grossWpm, errorRate } = measureTyping(typedText, passage, elapsedSeconds);
@@ -54,13 +57,18 @@ export default function MainPage() {
   }, [isLoading, isFinished]);
 
   const persistResult = useCallback(async (result: PendingResult) => {
-    // Always keep a local copy so anonymous tests survive reloads.
-    appendLocalResult(result);
-    setPendingCount(readPendingResults().length);
+    const currentUser = userRef.current;
+    const localSave = appendLocalResult(result);
+    setPendingCount(readPendingResults(currentUser?.id ?? null).length);
     setHistoryVersion((version) => version + 1);
 
-    if (!userRef.current) {
-      setSaveStatus("local");
+    if (!currentUser) {
+      if (localSave.historySaved && localSave.pendingSaved) {
+        setSaveStatus("local");
+      } else {
+        setSaveError("Browser storage is unavailable, so this result could not be saved.");
+        setSaveStatus("error");
+      }
       return;
     }
 
@@ -68,8 +76,8 @@ export default function MainPage() {
     setSaveError("");
     try {
       await postResult(result);
-      removePendingResult(result);
-      setPendingCount(readPendingResults().length);
+      markResultSynced(result.attemptId, currentUser.id);
+      setPendingCount(readPendingResults(currentUser.id).length);
       setSaveStatus("saved");
     } catch (err) {
       const status = (err as Error & { status?: number }).status;
@@ -77,19 +85,20 @@ export default function MainPage() {
         // Session expired: keep it queued locally for the next sign-in.
         setSaveStatus("local");
       } else {
-        setSaveError("Could not save your result. Please try again.");
+        setSaveError(localSave.pendingSaved
+          ? "Could not sync your result. It remains queued on this device."
+          : "Could not sync or queue your result because browser storage is unavailable.");
         setSaveStatus("error");
       }
-      setPendingCount(readPendingResults().length);
+      setPendingCount(readPendingResults(currentUser.id).length);
     }
     setHistoryVersion((version) => version + 1);
   }, []);
 
-  // When a signed-out user signs in, upload queued local results so their
-  // history syncs across devices. The leaderboard shows every upload.
+  // When a signed-out user signs in, upload that account's and guest results.
   useEffect(() => {
     if (!user || flushingRef.current) return;
-    const pending = readPendingResults();
+    const pending = readPendingResults(user.id);
     if (pending.length === 0) return;
     flushingRef.current = true;
     (async () => {
@@ -97,12 +106,12 @@ export default function MainPage() {
       for (const result of pending) {
         try {
           await postResult(result);
-          removePendingResult(result);
+          markResultSynced(result.attemptId, user.id);
         } catch {
           failures += 1;
         }
       }
-      setPendingCount(readPendingResults().length);
+      setPendingCount(readPendingResults(user.id).length);
       if (failures === 0) setSaveStatus((previous) => (previous === "local" ? "saved" : previous));
       setHistoryVersion((version) => version + 1);
       flushingRef.current = false;
@@ -110,13 +119,14 @@ export default function MainPage() {
   }, [user]);
 
   const retrySave = useCallback(async () => {
-    const pending = readPendingResults();
+    const currentUser = userRef.current;
+    const pending = readPendingResults(currentUser?.id ?? null);
     const latest = pending[pending.length - 1];
     if (!latest) {
       setSaveStatus("idle");
       return;
     }
-    if (!userRef.current) {
+    if (!currentUser) {
       setSaveStatus("local");
       return;
     }
@@ -124,8 +134,8 @@ export default function MainPage() {
     setSaveError("");
     try {
       await postResult(latest);
-      removePendingResult(latest);
-      setPendingCount(readPendingResults().length);
+      markResultSynced(latest.attemptId, currentUser.id);
+      setPendingCount(readPendingResults(currentUser.id).length);
       setSaveStatus("saved");
     } catch {
       setSaveError("Could not save your result. Please try again.");
@@ -157,12 +167,17 @@ export default function MainPage() {
       setIsFinished(true);
       setSamples((previous) => [...previous, finalSample]);
       void persistResult({
+        attemptId: crypto.randomUUID(),
+        ownerId: userRef.current?.id ?? null,
+        mode,
         grossWpm: finalSample.grossWpm,
         accuracy: finalAccuracy,
         elapsedSeconds: seconds,
         charsTyped: value.length,
         passageLength: passage.length,
-        createdAt: new Date().toISOString(),
+        completedAt: new Date().toISOString(),
+        passage,
+        typedText: value,
       });
     }
   }
@@ -183,10 +198,7 @@ export default function MainPage() {
     return () => window.clearInterval(intervalId);
   }, [startedAt, isFinished, passage]);
 
-  async function loadRandomPassage() {
-    if (isLoading) return;
-
-    setIsLoading(true);
+  function resetAttempt() {
     setError("");
     setSaveError("");
     setSaveStatus("idle");
@@ -198,6 +210,18 @@ export default function MainPage() {
     setElapsedSeconds(0);
     setIsFinished(false);
     finishPersistedRef.current = false;
+  }
+
+  function changeMode(nextMode: TypingMode) {
+    setMode(nextMode);
+    resetAttempt();
+  }
+
+  async function loadRandomPassage() {
+    if (isLoading) return;
+
+    setIsLoading(true);
+    resetAttempt();
 
     try {
       const response = await fetch("https://dummyjson.com/quotes/random", {
@@ -227,6 +251,19 @@ export default function MainPage() {
 
   return (
     <main className="mx-auto w-full max-w-3xl space-y-6 px-6 py-16">
+      <div className="flex items-center gap-2 text-sm xl:fixed xl:left-10 xl:top-16">
+        <label htmlFor="typing-mode" className="font-medium">Mode:</label>
+        <select
+          id="typing-mode"
+          value={mode}
+          onChange={(event) => changeMode(event.target.value as TypingMode)}
+          disabled={isLoading || (startedAt !== null && !isFinished)}
+          className="rounded-lg border border-gray-500 bg-transparent px-3 py-2 disabled:opacity-50"
+        >
+          <option value="practice">Practice</option>
+          <option value="test">Test</option>
+        </select>
+      </div>
       <h1 className="text-3xl font-bold">Typing Performance Tester</h1>
       <div className="flex flex-wrap gap-3">
         <Link href="/leaderboard" className="rounded-lg bg-blue-600 px-4 py-2 text-white hover:bg-blue-700">
@@ -250,7 +287,10 @@ export default function MainPage() {
       )}
 
       <p id="typing-hint" className="text-sm text-gray-500">
-        Start typing to begin. Use Enter for ↵.
+        {mode === "practice"
+          ? "Practice mode: saved to your history only. Start typing to begin."
+          : "Test mode: completed signed-in results qualify for the leaderboard. Start typing to begin."}
+        {passage.includes("\n") ? " Use Enter for ↵." : ""}
       </p>
 
       <div
@@ -315,20 +355,21 @@ export default function MainPage() {
       <p>Characters typed: {typedText.length} / {passage.length}</p>
       <p>Time: {elapsedSeconds.toFixed(1)} seconds</p>
       <p>Accuracy: {accuracy === null ? "—" : `${accuracy.toFixed(1)}%`}</p>
-      <p>Gross WPM: {grossWpm === null ? "—" : `${grossWpm.toFixed(1)} words per minutes`}</p>
-      <p className="font-bold">Adjusted WPM: {adjustedWpm === null ? "—" : `${adjustedWpm.toFixed(1)} words per minutes`}</p>
+      <p>Gross WPM: {grossWpm.toFixed(1)} words per minute</p>
+      <p className="font-bold">Adjusted WPM: {adjustedWpm.toFixed(1)} words per minute</p>
 
       {isFinished && (
         <div className="space-y-2">
           <p role="status" className="text-green-500">
-            Test completed! Load another passage to try again.
+            {mode === "test" ? "Test completed!" : "Practice passage completed!"} Load another passage to try again.
           </p>
           {saveStatus === "saving" && (
             <p role="status" className="text-sm text-gray-500">Saving your result…</p>
           )}
           {saveStatus === "saved" && (
             <p role="status" className="text-sm text-green-600">
-              Result saved{pendingCount > 0 ? ` (${pendingCount} older result${pendingCount === 1 ? "" : "s"} still queued)` : ""}. See it on the leaderboard.
+              {mode === "test" ? "Test result saved and eligible for the leaderboard" : "Practice result saved to your history"}
+              {pendingCount > 0 ? ` (${pendingCount} older result${pendingCount === 1 ? "" : "s"} still queued)` : ""}.
             </p>
           )}
           {saveStatus === "local" && (

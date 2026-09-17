@@ -28,8 +28,12 @@ function createSessionHandler({ config = process.env, database = getDatabase, st
           if (!sessionStore) {
             const db = await database();
             await db.collection('users').createIndex({ googleId: 1 }, { unique: true }).catch(() => {});
-            await db.collection('test_results').createIndex({ userId: 1, wpm: -1, accuracy: -1 }).catch(() => {});
-            await db.collection('test_results').createIndex({ createdAt: -1 }).catch(() => {});
+            await db.collection('test_results').createIndex({ userId: 1, completedAt: -1 }).catch(() => {});
+            await db.collection('test_results').createIndex(
+              { attemptId: 1 },
+              { unique: true, partialFilterExpression: { attemptId: { $type: 'string' } } },
+            ).catch(() => {});
+            await db.collection('test_results').createIndex({ mode: 1, wpm: -1, accuracy: -1 }).catch(() => {});
             sessionStore = MongoStore.create({
               clientPromise: getClient(),
               dbName: db.databaseName,

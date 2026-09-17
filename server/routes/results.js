@@ -8,23 +8,43 @@ function isFiniteNumber(value) {
 }
 
 function validateResult(body = {}) {
-  const { grossWpm, accuracy, elapsedSeconds, charsTyped, passageLength } = body;
+  const { attemptId, ownerId, mode, passage, typedText, elapsedSeconds, completedAt } = body;
 
-  if (!isFiniteNumber(grossWpm) || grossWpm < 0 || grossWpm > 300) {
-    return 'grossWpm must be a number between 0 and 300.';
+  if (typeof attemptId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(attemptId)) {
+    return 'attemptId must be a valid UUID.';
   }
-  if (!isFiniteNumber(accuracy) || accuracy < 0 || accuracy > 100) {
-    return 'accuracy must be a number between 0 and 100.';
+  if (ownerId !== null && ownerId !== undefined && !ObjectId.isValid(ownerId)) {
+    return 'ownerId must be a valid user ID when provided.';
   }
-  if (!isFiniteNumber(elapsedSeconds) || elapsedSeconds <= 0 || elapsedSeconds > 3600) {
-    return 'elapsedSeconds must be a number greater than 0.';
+  if (!['practice', 'test'].includes(mode)) {
+    return 'mode must be practice or test.';
   }
-  for (const [key, value] of [['charsTyped', charsTyped], ['passageLength', passageLength]]) {
-    if (value !== undefined && value !== null && (!Number.isInteger(value) || value <= 0 || value > 10000)) {
-      return `${key} must be a positive integer when provided.`;
-    }
+  if (typeof passage !== 'string' || passage.length === 0 || passage.length > 10000) {
+    return 'passage must contain between 1 and 10000 characters.';
+  }
+  if (typeof typedText !== 'string' || typedText.length !== passage.length) {
+    return 'typedText must contain exactly one character for every passage character.';
+  }
+  if (!isFiniteNumber(elapsedSeconds) || elapsedSeconds < 0.1 || elapsedSeconds > 3600) {
+    return 'elapsedSeconds must be between 0.1 and 3600.';
+  }
+  const completedDate = new Date(completedAt);
+  if (typeof completedAt !== 'string' || Number.isNaN(completedDate.getTime())) {
+    return 'completedAt must be a valid date.';
+  }
+  const now = Date.now();
+  if (completedDate.getTime() > now + 5 * 60 * 1000 || completedDate.getTime() < now - 365 * 24 * 60 * 60 * 1000) {
+    return 'completedAt is outside the accepted range.';
   }
   return null;
+}
+
+function calculateResult({ passage, typedText, elapsedSeconds }) {
+  const errors = typedText.split('').filter((character, index) => character !== passage[index]).length;
+  const accuracy = ((typedText.length - errors) / typedText.length) * 100;
+  const grossWpm = (typedText.length / 5) / (elapsedSeconds / 60);
+  const wpm = grossWpm * (accuracy / 100);
+  return { grossWpm, accuracy, wpm };
 }
 
 function createResultsRouter({ config = process.env, database = getDatabase, store } = {}) {
@@ -61,7 +81,7 @@ function createResultsRouter({ config = process.env, database = getDatabase, sto
       return res.status(400).json({ error: { code: 'INVALID_RESULT', message: validationError } });
     }
 
-    const { grossWpm, accuracy, elapsedSeconds, charsTyped, passageLength } = req.body;
+    const { attemptId, ownerId, mode, passage, typedText, elapsedSeconds, completedAt } = req.body;
 
     try {
       const db = await database();
@@ -69,32 +89,54 @@ function createResultsRouter({ config = process.env, database = getDatabase, sto
       if (!user) {
         return res.status(401).json({ error: { code: 'UNAUTHENTICATED', message: 'Sign in to save results.' } });
       }
+      if (ownerId && ownerId !== user._id.toString()) {
+        return res.status(403).json({ error: { code: 'WRONG_OWNER', message: 'This result belongs to another account.' } });
+      }
 
-      const wpm = Math.round((grossWpm * accuracy / 100) * 10) / 10;
+      const { grossWpm, accuracy, wpm } = calculateResult({ passage, typedText, elapsedSeconds });
+      if (grossWpm > 300) {
+        return res.status(400).json({ error: { code: 'INVALID_RESULT', message: 'The calculated typing speed exceeds the accepted limit.' } });
+      }
       const doc = {
+        attemptId,
         userId: user._id,
         name: user.name,
         username: user.username,
+        mode,
         grossWpm,
         accuracy,
         wpm,
         elapsedSeconds,
-        charsTyped: charsTyped ?? null,
-        passageLength: passageLength ?? null,
-        createdAt: new Date(),
+        charsTyped: typedText.length,
+        passageLength: passage.length,
+        completedAt: new Date(completedAt),
+        receivedAt: new Date(),
       };
-      await db.collection('test_results').createIndex({ userId: 1, wpm: -1, accuracy: -1 }).catch(() => {});
-      const inserted = await db.collection('test_results').insertOne(doc);
+      const collection = db.collection('test_results');
+      await collection.createIndex(
+        { attemptId: 1 },
+        { unique: true, partialFilterExpression: { attemptId: { $type: 'string' } } },
+      );
+      const saved = await collection.findOneAndUpdate(
+        { attemptId },
+        { $setOnInsert: doc },
+        { upsert: true, returnDocument: 'after' },
+      );
+      if (!saved || saved.userId?.toString() !== user._id.toString()) {
+        return res.status(403).json({ error: { code: 'WRONG_OWNER', message: 'This result belongs to another account.' } });
+      }
 
-      return res.status(201).json({
+      return res.status(200).json({
         data: {
           id: user._id.toString(),
-          resultId: inserted.insertedId.toString(),
+          resultId: saved._id.toString(),
           name: user.name,
           username: user.username,
-          grossWpm,
-          accuracy,
-          wpm,
+          mode: saved.mode,
+          grossWpm: saved.grossWpm,
+          accuracy: saved.accuracy,
+          wpm: saved.wpm,
+          completedAt: saved.completedAt,
         },
       });
     } catch {
@@ -110,17 +152,18 @@ function createResultsRouter({ config = process.env, database = getDatabase, sto
       const db = await database();
       const results = await db.collection('test_results')
         .find({ userId: new ObjectId(req.session.userId) })
-        .sort({ createdAt: -1 })
+        .sort({ completedAt: -1, receivedAt: -1, createdAt: -1 })
         .limit(50)
         .toArray();
       return res.json({
         data: results.map((entry) => ({
           resultId: entry._id.toString(),
+          mode: entry.mode || 'practice',
           grossWpm: entry.grossWpm,
           accuracy: entry.accuracy,
           wpm: entry.wpm ?? Math.round(entry.grossWpm * entry.accuracy / 100 * 10) / 10,
           elapsedSeconds: entry.elapsedSeconds,
-          createdAt: entry.createdAt,
+          completedAt: entry.completedAt || entry.createdAt || entry.receivedAt,
         })),
       });
     } catch {
@@ -131,4 +174,4 @@ function createResultsRouter({ config = process.env, database = getDatabase, sto
   return router;
 }
 
-module.exports = { createResultsRouter, validateResult };
+module.exports = { calculateResult, createResultsRouter, validateResult };

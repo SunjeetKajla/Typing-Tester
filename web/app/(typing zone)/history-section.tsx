@@ -6,13 +6,15 @@ import {
   fetchServerHistory,
   readLocalHistory,
   readPendingResults,
-  type PendingResult,
+  type LocalResult,
   type ServerHistoryEntry,
+  type TypingMode,
 } from "./local-results";
 
 type HistoryRow = {
   key: string;
-  createdAt: string;
+  completedAt: string;
+  mode: TypingMode;
   wpm: number;
   accuracy: number;
   grossWpm: number;
@@ -23,7 +25,8 @@ type HistoryRow = {
 function toRowFromServer(entry: ServerHistoryEntry): HistoryRow {
   return {
     key: entry.resultId,
-    createdAt: entry.createdAt,
+    completedAt: entry.completedAt,
+    mode: entry.mode,
     wpm: entry.wpm,
     accuracy: entry.accuracy,
     grossWpm: entry.grossWpm,
@@ -32,10 +35,11 @@ function toRowFromServer(entry: ServerHistoryEntry): HistoryRow {
   };
 }
 
-function toRowFromLocal(entry: PendingResult, index: number): HistoryRow {
+function toRowFromLocal(entry: LocalResult, index: number): HistoryRow {
   return {
-    key: `${entry.createdAt}-${index}`,
-    createdAt: entry.createdAt,
+    key: entry.attemptId ?? `${entry.completedAt}-${index}`,
+    completedAt: entry.completedAt,
+    mode: entry.mode,
     wpm: Math.round((entry.grossWpm * entry.accuracy) / 100 * 10) / 10,
     accuracy: entry.accuracy,
     grossWpm: entry.grossWpm,
@@ -78,8 +82,9 @@ export default function HistorySection({
       // synchronously inside the effect body.
       await Promise.resolve();
       if (controller.signal.aborted) return;
-      setLocalRows(readLocalHistory().map(toRowFromLocal).reverse());
-      setPendingCount(readPendingResults().length);
+      const ownerId = user?.id ?? null;
+      setLocalRows(readLocalHistory(ownerId).map(toRowFromLocal).reverse());
+      setPendingCount(readPendingResults(ownerId).length);
 
       if (!user) {
         setServerRows(null);
@@ -130,12 +135,12 @@ export default function HistorySection({
         <p className="text-sm text-gray-500">
           {authLoading
             ? "Checking your account…"
-            : "Synced across devices. Your results also appear on the leaderboard."}
+            : "Synced across devices. Test-mode results can appear on the leaderboard."}
         </p>
       )}
       {showDeviceNote && (
         <p className="text-sm text-gray-500">
-          Saved on this device. Sign in to sync it across devices and appear on the leaderboard.
+          Saved on this device. Sign in to sync it across devices; Test results can then appear on the leaderboard.
         </p>
       )}
 
@@ -156,7 +161,7 @@ export default function HistorySection({
         </div>
       ) : rows.length === 0 ? (
         <p className="text-sm text-gray-500">
-          No completed tests yet. Finish a passage and it will show up here.
+          No completed attempts yet. Finish a passage and it will show up here.
         </p>
       ) : (
         <div className="overflow-x-auto rounded-lg border border-gray-500">
@@ -168,6 +173,9 @@ export default function HistorySection({
               <tr>
                 <th scope="col" className="px-4 py-3 font-medium">
                   Date
+                </th>
+                <th scope="col" className="px-4 py-3 font-medium">
+                  Mode
                 </th>
                 <th scope="col" className="px-4 py-3 text-right font-medium">
                   Adjusted WPM
@@ -187,13 +195,14 @@ export default function HistorySection({
               {rows.map((row) => (
                 <tr key={row.key} className="border-b border-gray-500/20 last:border-0">
                   <td className="px-4 py-3 whitespace-nowrap">
-                    {formatDate(row.createdAt)}
+                    {formatDate(row.completedAt)}
                     {row.source === "device" && !user && (
                       <span className="ml-2 rounded bg-gray-500/20 px-1.5 py-0.5 text-xs text-gray-500">
                         this device
                       </span>
                     )}
                   </td>
+                  <td className="px-4 py-3 capitalize">{row.mode}</td>
                   <td className="px-4 py-3 text-right font-mono font-semibold">{row.wpm.toFixed(1)}</td>
                   <td className="px-4 py-3 text-right font-mono">{row.accuracy.toFixed(1)}%</td>
                   <td className="px-4 py-3 text-right font-mono">{row.grossWpm.toFixed(1)}</td>
@@ -214,6 +223,9 @@ export default function HistorySection({
                 <th scope="col" className="px-4 py-3 font-medium">
                   Date
                 </th>
+                <th scope="col" className="px-4 py-3 font-medium">
+                  Mode
+                </th>
                 <th scope="col" className="px-4 py-3 text-right font-medium">
                   Adjusted WPM
                 </th>
@@ -225,7 +237,8 @@ export default function HistorySection({
             <tbody>
               {localRows.map((row) => (
                 <tr key={row.key} className="border-b border-gray-500/20 last:border-0">
-                  <td className="px-4 py-3 whitespace-nowrap">{formatDate(row.createdAt)}</td>
+                  <td className="px-4 py-3 whitespace-nowrap">{formatDate(row.completedAt)}</td>
+                  <td className="px-4 py-3 capitalize">{row.mode}</td>
                   <td className="px-4 py-3 text-right font-mono font-semibold">{row.wpm.toFixed(1)}</td>
                   <td className="px-4 py-3 text-right font-mono">{row.accuracy.toFixed(1)}%</td>
                 </tr>

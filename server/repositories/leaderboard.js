@@ -7,12 +7,16 @@ async function listEntries({ database = getDatabase, limit = LEADERBOARD_LIMIT }
   const collection = db.collection('test_results');
 
   const pipeline = [
+    { $match: { mode: 'test' } },
     {
       $addFields: {
         _adjusted: { $multiply: ['$grossWpm', { $divide: ['$accuracy', 100] }] },
       },
     },
-    { $sort: { _adjusted: -1, accuracy: -1, createdAt: -1 } },
+    { $sort: { _adjusted: -1, accuracy: -1, completedAt: -1 } },
+    { $group: { _id: '$userId', best: { $first: '$$ROOT' } } },
+    { $replaceRoot: { newRoot: '$best' } },
+    { $sort: { _adjusted: -1, accuracy: -1, completedAt: -1 } },
     { $limit: limit },
     {
       $lookup: {

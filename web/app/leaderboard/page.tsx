@@ -50,7 +50,7 @@ export default function LeaderboardPage() {
         Back to typing
       </Link>
 
-      <p className="text-sm text-gray-500">Passage results from all typists, ranked by adjusted WPM (top 50).</p>
+      <p className="text-sm text-gray-500">Each typist’s best Test-mode result, ranked by adjusted WPM (top 50).</p>
 
       {isLoading ? (
         <p role="status" className="text-gray-500">Loading leaderboard...</p>
@@ -70,7 +70,7 @@ export default function LeaderboardPage() {
       ) : (
         <div className="overflow-x-auto rounded-lg border border-gray-500">
           <table className="w-full text-left text-sm">
-            <caption className="sr-only">Typing rankings from all typists</caption>
+            <caption className="sr-only">Best Test-mode typing result for each typist</caption>
             <thead className="border-b border-gray-500 text-gray-500">
               <tr>
                 <th scope="col" className="px-4 py-4 font-medium">Rank</th>

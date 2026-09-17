@@ -8,7 +8,7 @@ FROM node:24-bookworm-slim AS runtime
 WORKDIR /app
 ENV NODE_ENV=production PORT=8000
 COPY --from=dependencies --chown=node:node /app/node_modules ./node_modules
-COPY --chown=node:node package.json server.js app.js database.js ./
+COPY --chown=node:node package.json server.js app.js database.js session.js ./
 COPY --chown=node:node routes ./routes
 COPY --chown=node:node repositories ./repositories
 USER node
