@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import HistorySection from "./history-section";
+import MultiplayerMode from "./multiplayer-mode";
 import SpeedGraph from "./speed-graph";
 import { measureTyping, type TypingSample } from "./typing-stats";
 import { useCurrentUser } from "../use-current-user";
@@ -21,6 +22,7 @@ const TEST_DURATION_SECONDS = 60;
 const TEST_PASSAGE_WORD_COUNT = 400;
 
 type PassageType = "words" | "sentences";
+type AppMode = TypingMode | "multiplayer";
 type PassageResponse = {
   passage: string;
   type: PassageType;
@@ -42,7 +44,7 @@ export default function MainPage() {
   const [passageType, setPassageType] = useState<PassageType>("sentences");
   const [wordCount, setWordCount] = useState(25);
   const [actualWordCount, setActualWordCount] = useState(26);
-  const [mode, setMode] = useState<TypingMode>("practice");
+  const [mode, setMode] = useState<AppMode>("practice");
   const [startedAt, setStartedAt] = useState<number | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [isFinished, setIsFinished] = useState(false);
@@ -55,6 +57,12 @@ export default function MainPage() {
   const [historyVersion, setHistoryVersion] = useState(0);
   const { user, loading: authLoading } = useCurrentUser();
   const userRef = useRef(user);
+
+  useEffect(() => {
+    if (!authLoading && !user && mode === "multiplayer") {
+      queueMicrotask(() => setMode("practice"));
+    }
+  }, [authLoading, mode, user]);
 
   useEffect(() => {
     let cancelled = false;
@@ -184,7 +192,7 @@ export default function MainPage() {
     void persistResult({
       attemptId: crypto.randomUUID(),
       ownerId: userRef.current?.id ?? null,
-      mode,
+      mode: mode === "test" ? "test" : "practice",
       grossWpm: finalSample.grossWpm,
       accuracy: finalAccuracy,
       elapsedSeconds: finalSeconds,
@@ -256,7 +264,13 @@ export default function MainPage() {
     finishPersistedRef.current = false;
   }
 
-  async function changeMode(nextMode: TypingMode) {
+  async function changeMode(nextMode: AppMode) {
+    if (nextMode === "multiplayer") {
+      if (!user) return;
+      resetAttempt();
+      setMode("multiplayer");
+      return;
+    }
     const loaded = await loadPassage(
       nextMode === "test" ? "sentences" : passageType,
       nextMode === "test" ? TEST_PASSAGE_WORD_COUNT : wordCount,
@@ -311,20 +325,28 @@ export default function MainPage() {
 
   return (
     <main className="mx-auto w-full max-w-3xl space-y-6 px-6 py-16">
-      <div className="flex items-center gap-2 text-sm xl:fixed xl:left-10 xl:top-16">
-        <label htmlFor="typing-mode" className="font-medium">Mode:</label>
-        <select
-          id="typing-mode"
-          value={mode}
-          onChange={(event) => changeMode(event.target.value as TypingMode)}
-          disabled={isLoading || (startedAt !== null && !isFinished)}
-          className="rounded-lg border border-gray-500 bg-transparent px-3 py-2 disabled:opacity-50"
-        >
-          <option value="practice">Practice</option>
-          <option value="test">Test</option>
-        </select>
+      <div className="text-sm xl:fixed xl:left-10 xl:top-16">
+        <div className="flex items-center gap-2">
+          <label htmlFor="typing-mode" className="font-medium">Mode:</label>
+          <select
+            id="typing-mode"
+            value={mode}
+            onChange={(event) => void changeMode(event.target.value as AppMode)}
+            disabled={isLoading || (mode !== "multiplayer" && startedAt !== null && !isFinished)}
+            className="rounded-lg border border-gray-500 bg-transparent px-3 py-2 disabled:opacity-50"
+          >
+            <option value="practice">Practice</option>
+            <option value="test">Test</option>
+            <option value="multiplayer" disabled={!user}>Multiplayer{user ? "" : " 🔒"}</option>
+          </select>
+        </div>
+        {!authLoading && !user && <p className="mt-2 max-w-48 text-xs text-gray-500">Sign in to unlock multiplayer.</p>}
       </div>
       <h1 className="text-3xl font-bold">Typing Performance Tester</h1>
+      {mode === "multiplayer" && user ? (
+        <MultiplayerMode user={user} />
+      ) : (
+      <>
       <div className="flex flex-wrap items-end gap-3 rounded-lg border border-gray-500/40 p-4">
         {mode === "practice" ? (
           <>
@@ -507,6 +529,8 @@ export default function MainPage() {
         adjustedWpm={adjustedWpm}
       />
       <HistorySection user={user} authLoading={authLoading} refreshKey={historyVersion} />
+      </>
+      )}
     </main>
   );
 }

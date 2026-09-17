@@ -10,6 +10,7 @@ ENV NODE_ENV=production PORT=8000
 COPY --from=dependencies --chown=node:node /app/node_modules ./node_modules
 COPY --chown=node:node package.json server.js app.js database.js session.js ./
 COPY --chown=node:node routes ./routes
+COPY --chown=node:node multiplayer ./multiplayer
 COPY --chown=node:node repositories ./repositories
 COPY --chown=node:node data ./data
 USER node

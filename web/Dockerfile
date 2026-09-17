@@ -5,7 +5,9 @@ RUN npm ci
 
 FROM node:24-bookworm-slim AS build
 WORKDIR /app
-ENV NEXT_TELEMETRY_DISABLED=1
+ARG NEXT_PUBLIC_SOCKET_URL=http://localhost:8000
+ENV NEXT_TELEMETRY_DISABLED=1 \
+    NEXT_PUBLIC_SOCKET_URL=${NEXT_PUBLIC_SOCKET_URL}
 COPY --from=dependencies /app/node_modules ./node_modules
 COPY . .
 RUN npm run build

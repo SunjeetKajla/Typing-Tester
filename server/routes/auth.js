@@ -5,6 +5,7 @@ const { OAuth2Client } = require('google-auth-library');
 const { randomBytes } = require('node:crypto');
 const { ObjectId } = require('mongodb');
 const { getClient, getDatabase } = require('../database');
+const { createSocketToken } = require('../multiplayer/token');
 
 function createAuthRouter({ config = process.env, database = getDatabase, store, googleClient } = {}) {
   const router = express.Router();
@@ -112,6 +113,16 @@ function createAuthRouter({ config = process.env, database = getDatabase, store,
     const db = await database();
     const user = await db.collection('users').findOne({ _id: new ObjectId(req.session.userId) });
     res.json({ user: user ? { id: user._id.toString(), username: user.username, name: user.name } : null });
+  });
+
+  router.post('/socket-token', async (req, res) => {
+    if (!req.session.userId || !ObjectId.isValid(req.session.userId)) {
+      return res.status(401).json({ error: 'Sign in to use multiplayer.' });
+    }
+    const db = await database();
+    const user = await db.collection('users').findOne({ _id: new ObjectId(req.session.userId) });
+    if (!user) return res.status(401).json({ error: 'Sign in to use multiplayer.' });
+    return res.json({ token: createSocketToken(user._id.toString(), config.SESSION_SECRET) });
   });
 
   router.post('/logout', async (req, res) => {
