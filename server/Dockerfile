@@ -2,7 +2,7 @@ FROM node:24-bookworm-slim AS dependencies
 WORKDIR /app
 RUN npm install --global pnpm@11.19.0
 COPY package.json pnpm-lock.yaml ./
-RUN pnpm install --prod --frozen-lockfile
+RUN pnpm install --prod --no-frozen-lockfile
 
 FROM node:24-bookworm-slim AS runtime
 WORKDIR /app
