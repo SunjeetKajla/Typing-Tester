@@ -25,6 +25,7 @@ export type PendingResult = LocalResult & {
 const PENDING_KEY = "typing.pendingResults";
 const HISTORY_KEY = "typing.localHistory";
 const MAX_STORED = 100;
+const TEST_DURATION_SECONDS = 60;
 
 function normalizeResult(value: unknown): LocalResult | null {
   if (!value || typeof value !== "object") return null;
@@ -41,10 +42,15 @@ function normalizeResult(value: unknown): LocalResult | null {
     !completedAt
   ) return null;
 
+  const isTimedTest = item.mode === "test" &&
+    Math.abs(item.elapsedSeconds - TEST_DURATION_SECONDS) <= 0.5;
+
   return {
     attemptId: typeof item.attemptId === "string" ? item.attemptId : undefined,
     ownerId: typeof item.ownerId === "string" ? item.ownerId : null,
-    mode: item.mode === "test" ? "test" : "practice",
+    // Results from the earlier passage-completion Test mode remain valid history,
+    // but migrate to Practice so they do not retry against the timed-test contract.
+    mode: isTimedTest ? "test" : "practice",
     grossWpm: item.grossWpm,
     accuracy: item.accuracy,
     elapsedSeconds: item.elapsedSeconds,

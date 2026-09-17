@@ -135,12 +135,12 @@ export default function HistorySection({
         <p className="text-sm text-gray-500">
           {authLoading
             ? "Checking your account…"
-            : "Synced across devices. Test-mode results can appear on the leaderboard."}
+            : "Synced across devices. 60-second Test results can appear on the leaderboard."}
         </p>
       )}
       {showDeviceNote && (
         <p className="text-sm text-gray-500">
-          Saved on this device. Sign in to sync it across devices; Test results can then appear on the leaderboard.
+          Saved on this device. Sign in to sync it across devices; 60-second Test results can then appear on the leaderboard.
         </p>
       )}
 

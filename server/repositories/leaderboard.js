@@ -7,7 +7,7 @@ async function listEntries({ database = getDatabase, limit = LEADERBOARD_LIMIT }
   const collection = db.collection('test_results');
 
   const pipeline = [
-    { $match: { mode: 'test' } },
+    { $match: { mode: 'test', elapsedSeconds: { $gte: 59.5, $lte: 60.5 } } },
     {
       $addFields: {
         _adjusted: { $multiply: ['$grossWpm', { $divide: ['$accuracy', 100] }] },

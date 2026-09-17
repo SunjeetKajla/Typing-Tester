@@ -11,6 +11,7 @@ COPY --from=dependencies --chown=node:node /app/node_modules ./node_modules
 COPY --chown=node:node package.json server.js app.js database.js session.js ./
 COPY --chown=node:node routes ./routes
 COPY --chown=node:node repositories ./repositories
+COPY --chown=node:node data ./data
 USER node
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \

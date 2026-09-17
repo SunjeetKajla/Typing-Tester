@@ -3,6 +3,8 @@ const { ObjectId } = require('mongodb');
 const { getDatabase } = require('../database');
 const { createSessionHandler } = require('../session');
 
+const TEST_DURATION_SECONDS = 60;
+
 function isFiniteNumber(value) {
   return typeof value === 'number' && Number.isFinite(value);
 }
@@ -22,11 +24,17 @@ function validateResult(body = {}) {
   if (typeof passage !== 'string' || passage.length === 0 || passage.length > 10000) {
     return 'passage must contain between 1 and 10000 characters.';
   }
-  if (typeof typedText !== 'string' || typedText.length !== passage.length) {
-    return 'typedText must contain exactly one character for every passage character.';
+  if (typeof typedText !== 'string' || typedText.length === 0 || typedText.length > passage.length) {
+    return 'typedText must contain between 1 character and the full passage length.';
+  }
+  if (mode === 'practice' && typedText.length !== passage.length) {
+    return 'Practice results must contain the completed passage.';
   }
   if (!isFiniteNumber(elapsedSeconds) || elapsedSeconds < 0.1 || elapsedSeconds > 3600) {
     return 'elapsedSeconds must be between 0.1 and 3600.';
+  }
+  if (mode === 'test' && Math.abs(elapsedSeconds - TEST_DURATION_SECONDS) > 0.5) {
+    return `Test results must use the ${TEST_DURATION_SECONDS}-second duration.`;
   }
   const completedDate = new Date(completedAt);
   if (typeof completedAt !== 'string' || Number.isNaN(completedDate.getTime())) {
@@ -174,4 +182,4 @@ function createResultsRouter({ config = process.env, database = getDatabase, sto
   return router;
 }
 
-module.exports = { calculateResult, createResultsRouter, validateResult };
+module.exports = { TEST_DURATION_SECONDS, calculateResult, createResultsRouter, validateResult };
